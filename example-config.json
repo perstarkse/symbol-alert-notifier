@@ -1,0 +1,11 @@
+{
+    "ntfy_url": "https://ntfy.sh/my-private-embodied-ai-signals",
+    "interval_type": "1wk",
+    "frequency_seconds": 86400,
+    "tickers": [
+        { "symbol": "KOID", "threshold": 35.0 },
+        { "symbol": "BOTZ", "threshold": 33.0 },
+        { "symbol": "ROBO", "threshold": 30.0 },
+        { "symbol": "TSLA", "threshold": 32.0 }
+    ]
+}
