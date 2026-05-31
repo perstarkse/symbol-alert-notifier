@@ -1,5 +1,5 @@
 [package]
-name = "rsi-alert-daemon"
+name = "indicator-alert-daemon"
 version = "0.1.0"
 edition = "2021"
 

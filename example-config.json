@@ -3,9 +3,30 @@
     "interval_type": "1wk",
     "frequency_seconds": 86400,
     "tickers": [
-        { "symbol": "KOID", "threshold": 35.0 },
-        { "symbol": "BOTZ", "threshold": 33.0 },
-        { "symbol": "ROBO", "threshold": 30.0 },
-        { "symbol": "TSLA", "threshold": 32.0 }
+        {
+            "symbol": "KOID",
+            "indicators": [
+                { "type": "rsi", "threshold": 35.0, "period": 14 }
+            ]
+        },
+        {
+            "symbol": "BOTZ",
+            "indicators": [
+                { "type": "rsi", "threshold": 33.0 }
+            ]
+        },
+        {
+            "symbol": "ROBO",
+            "indicators": [
+                { "type": "rsi", "threshold": 30.0 }
+            ]
+        },
+        {
+            "symbol": "TSLA",
+            "indicators": [
+                { "type": "rsi", "threshold": 32.0 },
+                { "type": "bollinger_bands", "period": 20, "stddev": 2.0 }
+            ]
+        }
     ]
 }

@@ -1,5 +1,5 @@
 {
-  description = "RSI alert daemon monitoring market indicators";
+  description = "Indicator alert daemon monitoring market conditions";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,13 +17,13 @@
       {
         packages = {
           default = rustPlatform.buildRustPackage {
-            pname = "rsi-alert-daemon";
+            pname = "indicator-alert-daemon";
             version = "0.1.0";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
 
             meta = {
-              description = "Daemon monitoring RSI boundaries for market tickers";
+              description = "Daemon monitoring market indicators for ticker alerts";
               license = pkgs.lib.licenses.mit;
               maintainers = [ ];
             };

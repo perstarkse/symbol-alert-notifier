@@ -4,8 +4,24 @@
   config,
   inputs,
   ...
-}: {
+}: let
+  fenixPkgs = inputs.fenix.packages.${pkgs.stdenv.hostPlatform.system};
+  llvmTools = fenixPkgs.stable."llvm-tools-preview";
+  rustTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget or pkgs.stdenv.hostPlatform.config;
+  llvmToolsBin = "${llvmTools}/lib/rustlib/${rustTarget}/bin";
+in {
+  packages = [
+    pkgs.git
+    pkgs.curl
+    pkgs.cargo-llvm-cov
+    llvmTools
+  ];
+
   languages.rust.enable = true;
+
+  env.LLVM_COV = "${llvmToolsBin}/llvm-cov";
+  env.LLVM_PROFDATA = "${llvmToolsBin}/llvm-profdata";
+
   git-hooks.install.enable = true;
   git-hooks.hooks = {
     rustfmt.enable = true;
