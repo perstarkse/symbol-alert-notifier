@@ -3,12 +3,13 @@ pub mod config;
 pub mod data;
 pub mod db;
 pub mod indicators;
+pub mod yahoo;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use config::load_config;
-use data::{build_chart_url, extract_ohlcv, YFResponse};
+use data::extract_ohlcv;
 use db::PriceDb;
 use indicators::Indicator;
 use tokio::sync::Mutex;
@@ -17,12 +18,24 @@ pub use config::{
     BollingerBandsConfig, CrossoverConfig, DaemonConfig, IndicatorConfig, MacdConfig, RsiConfig,
     TickerConfig,
 };
-pub use data::MarketData;
+pub use data::{extract_prices, MarketData, OhlcvRow};
 pub use indicators::IndicatorResult;
+pub use yahoo::{build_chart_url, YFQuote};
 
 fn resolve_db_path(config: &DaemonConfig) -> std::path::PathBuf {
     if let Some(ref path) = config.db_path {
         return std::path::PathBuf::from(path);
+    }
+    if let Ok(db_path) = std::env::var("DB_PATH") {
+        if !db_path.trim().is_empty() {
+            return std::path::PathBuf::from(db_path.trim());
+        }
+    }
+    if let Ok(state_dir) = std::env::var("STATE_DIRECTORY") {
+        let dir = std::path::PathBuf::from(state_dir);
+        if !dir.as_os_str().is_empty() {
+            return dir.join("data.db");
+        }
     }
     if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
         let dir = std::path::PathBuf::from(data_home).join("indicator-alert-daemon");
@@ -57,8 +70,9 @@ fn compute_retain_count(config: &DaemonConfig) -> i64 {
 async fn fetch_yahoo_chart(
     client: &reqwest::Client,
     url: &str,
-) -> Result<YFResponse, String> {
-    let max_retries = 3;
+    max_retries: u32,
+    retry_base_delay_ms: u64,
+) -> Result<yahoo::YFResponse, String> {
     let mut attempt = 0u32;
     loop {
         match client
@@ -68,7 +82,7 @@ async fn fetch_yahoo_chart(
             .await
         {
             Ok(resp) => {
-                return resp.json::<YFResponse>().await.map_err(|e| {
+                return resp.json::<yahoo::YFResponse>().await.map_err(|e| {
                     format!("Failed to parse response: {e}")
                 });
             }
@@ -77,7 +91,7 @@ async fn fetch_yahoo_chart(
                 if attempt >= max_retries {
                     return Err(format!("Network error after {max_retries} retries: {e}"));
                 }
-                let delay = Duration::from_millis(500 * 2u64.pow(attempt));
+                let delay = Duration::from_millis(retry_base_delay_ms * 2u64.pow(attempt));
                 tracing::warn!(
                     attempt,
                     delay_ms = delay.as_millis(),
@@ -154,7 +168,7 @@ pub async fn evaluate_market(
 
         let url = build_chart_url(&ticker.symbol, &config.interval_type, need_full_fetch);
 
-        let yf_resp = match fetch_yahoo_chart(&client, &url).await {
+        let yf_resp = match fetch_yahoo_chart(&client, &url, config.max_retries, config.retry_base_delay_ms).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(symbol = %ticker.symbol, error = %e, "Failed to fetch chart data");
@@ -286,11 +300,13 @@ mod tests {
 
     fn test_config() -> DaemonConfig {
         DaemonConfig {
-            ntfy_url: "http://localhost:1".to_string(),
+            ntfy_url: "https://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
             ticker_delay_ms: 1500,
+            max_retries: 3,
+            retry_base_delay_ms: 500,
             tickers: vec![TickerConfig {
                 symbol: "INVALID".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -336,11 +352,13 @@ mod tests {
     #[test]
     fn test_compute_retain_count_daily_cap_kicks_in() {
         let config = DaemonConfig {
-            ntfy_url: "http://localhost:1".to_string(),
+            ntfy_url: "https://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
             ticker_delay_ms: 1500,
+            max_retries: 3,
+            retry_base_delay_ms: 500,
             tickers: vec![TickerConfig {
                 symbol: "T".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -356,11 +374,13 @@ mod tests {
     #[test]
     fn test_compute_retain_count_minimum_floor() {
         let config = DaemonConfig {
-            ntfy_url: "http://localhost:1".to_string(),
+            ntfy_url: "https://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
             ticker_delay_ms: 1500,
+            max_retries: 3,
+            retry_base_delay_ms: 500,
             tickers: vec![TickerConfig {
                 symbol: "T".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -376,11 +396,13 @@ mod tests {
     #[tokio::test]
     async fn test_evaluate_market_handles_network_error() {
         let config = Arc::new(DaemonConfig {
-            ntfy_url: "http://localhost:1".to_string(),
+            ntfy_url: "https://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
             ticker_delay_ms: 1500,
+            max_retries: 3,
+            retry_base_delay_ms: 500,
             tickers: vec![TickerConfig {
                 symbol: "INVALID".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -403,11 +425,13 @@ mod tests {
     #[tokio::test]
     async fn test_evaluate_market_multiple_tickers() {
         let config = Arc::new(DaemonConfig {
-            ntfy_url: "http://localhost:1".to_string(),
+            ntfy_url: "https://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
             ticker_delay_ms: 1500,
+            max_retries: 3,
+            retry_base_delay_ms: 500,
             tickers: vec![
                 TickerConfig {
                     symbol: "AAA".to_string(),

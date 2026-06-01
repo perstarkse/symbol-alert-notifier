@@ -119,15 +119,6 @@ impl PriceDb {
         Ok(prices)
     }
 
-    #[cfg(test)]
-    pub fn close_prices_from_db(
-        &self,
-        symbol: &str,
-        interval: &str,
-    ) -> Result<Vec<f64>, rusqlite::Error> {
-        self.load_close_prices(symbol, interval)
-    }
-
     pub fn count_ohlcv(&self, symbol: &str, interval: &str) -> Result<i64, rusqlite::Error> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM ohlcv WHERE symbol = ?1 AND interval_t = ?2",
@@ -193,7 +184,7 @@ impl PriceDb {
         if retain_count <= 0 {
             return Ok(());
         }
-        self.conn.execute_batch(&format!(
+        let mut stmt = self.conn.prepare(
             "DELETE FROM ohlcv WHERE rowid IN (
                 SELECT o1.rowid FROM ohlcv o1
                 WHERE (
@@ -201,10 +192,10 @@ impl PriceDb {
                     WHERE o2.symbol = o1.symbol
                       AND o2.interval_t = o1.interval_t
                       AND o2.ts > o1.ts
-                ) >= {}
+                ) >= ?1
             )",
-            retain_count
-        ))?;
+        )?;
+        stmt.execute(params![retain_count])?;
         Ok(())
     }
 }

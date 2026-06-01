@@ -1,5 +1,5 @@
 {
-    "ntfy_url": "https://ntfy.sh/my-private-embodied-ai-signals",
+    "ntfy_url": "https://ntfy.sh/your-topic-here",
     "interval_type": "1wk",
     "frequency_seconds": 86400,
     "ticker_delay_ms": 1500,

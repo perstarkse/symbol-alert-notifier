@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Read;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -12,10 +11,22 @@ pub struct DaemonConfig {
     pub db_path: Option<String>,
     #[serde(default = "default_ticker_delay")]
     pub ticker_delay_ms: u64,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_retry_base_delay_ms")]
+    pub retry_base_delay_ms: u64,
 }
 
 const fn default_ticker_delay() -> u64 {
     1500
+}
+
+const fn default_max_retries() -> u32 {
+    3
+}
+
+const fn default_retry_base_delay_ms() -> u64 {
+    500
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,17 +100,52 @@ pub struct CrossoverConfig {
 }
 
 pub fn load_config(path: &str) -> Result<DaemonConfig, Box<dyn std::error::Error>> {
-    let mut file = fs::File::open(path)?;
-    let mut contents = String::new();
-    Read::read_to_string(&mut file, &mut contents)?;
-    let config: DaemonConfig = serde_json::from_str(&contents)?;
+    let contents = fs::read_to_string(path)?;
+    let mut config: DaemonConfig = serde_json::from_str(&contents)?;
+    apply_env_overrides(&mut config);
     validate_config(&config)?;
     Ok(config)
+}
+
+fn apply_env_overrides(config: &mut DaemonConfig) {
+    if let Ok(val) = std::env::var("NTFY_URL") {
+        if !val.trim().is_empty() {
+            config.ntfy_url = val.trim().to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("DB_PATH") {
+        if !val.trim().is_empty() {
+            config.db_path = Some(val.trim().to_string());
+        }
+    }
+    if let Ok(val) = std::env::var("INTERVAL_TYPE") {
+        let trimmed = val.trim().to_string();
+        if !trimmed.is_empty() {
+            config.interval_type = trimmed;
+        }
+    }
+    if let Ok(val) = std::env::var("FREQUENCY_SECONDS") {
+        if let Ok(parsed) = val.trim().parse::<u64>() {
+            config.frequency_seconds = parsed;
+        }
+    }
+    if let Ok(val) = std::env::var("TICKER_DELAY_MS") {
+        if let Ok(parsed) = val.trim().parse::<u64>() {
+            config.ticker_delay_ms = parsed;
+        }
+    }
 }
 
 fn validate_config(config: &DaemonConfig) -> Result<(), Box<dyn std::error::Error>> {
     if config.ntfy_url.trim().is_empty() {
         return Err("ntfy_url must not be empty".into());
+    }
+    let trimmed_url = config.ntfy_url.trim();
+    if !trimmed_url.starts_with("https://") {
+        return Err("ntfy_url must use https:// scheme".into());
+    }
+    if url::Url::parse(trimmed_url).is_err() {
+        return Err(format!("ntfy_url is not a valid URL: '{}'", trimmed_url).into());
     }
     match config.interval_type.as_str() {
         "1d" | "1wk" => {}
@@ -287,6 +333,8 @@ mod tests {
             frequency_seconds: 3600,
             db_path: None,
             ticker_delay_ms: 1500,
+            max_retries: 3,
+            retry_base_delay_ms: 500,
             tickers: vec![TickerConfig {
                 symbol: "TEST".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -308,6 +356,22 @@ mod tests {
         cfg.ntfy_url = "   ".to_string();
         let err = validate_config(&cfg).unwrap_err();
         assert!(err.to_string().contains("ntfy_url"));
+    }
+
+    #[test]
+    fn test_validate_ntfy_url_scheme_must_be_https() {
+        let mut cfg = valid_config();
+        cfg.ntfy_url = "http://ntfy.sh/test".to_string();
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("https"), "expected scheme error, got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_ntfy_url_must_be_valid_url() {
+        let mut cfg = valid_config();
+        cfg.ntfy_url = "https://".to_string();
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("valid URL"), "expected URL parse error, got: {}", err);
     }
 
     #[test]
