@@ -46,6 +46,10 @@ impl Indicator for BollingerBandsConfig {
     fn name(&self) -> &str {
         "Bollinger Bands"
     }
+
+    fn required_bars(&self) -> usize {
+        self.period * 2
+    }
 }
 
 fn bollinger_bands(prices: &[f64], period: usize, stddev: f64) -> (f64, f64, f64) {

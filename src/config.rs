@@ -8,6 +8,8 @@ pub struct DaemonConfig {
     pub interval_type: String,
     pub frequency_seconds: u64,
     pub tickers: Vec<TickerConfig>,
+    #[serde(default)]
+    pub db_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +87,66 @@ pub fn load_config(path: &str) -> Result<DaemonConfig, Box<dyn std::error::Error
     let mut contents = String::new();
     Read::read_to_string(&mut file, &mut contents)?;
     let config: DaemonConfig = serde_json::from_str(&contents)?;
+    validate_config(&config)?;
     Ok(config)
+}
+
+fn validate_config(config: &DaemonConfig) -> Result<(), Box<dyn std::error::Error>> {
+    if config.ntfy_url.trim().is_empty() {
+        return Err("ntfy_url must not be empty".into());
+    }
+    match config.interval_type.as_str() {
+        "1d" | "1wk" => {}
+        _ => {
+            return Err(format!(
+                "unsupported interval_type: '{}' (expected '1d' or '1wk')",
+                config.interval_type
+            )
+            .into());
+        }
+    }
+    if config.frequency_seconds == 0 {
+        return Err("frequency_seconds must be > 0".into());
+    }
+    if config.tickers.is_empty() {
+        return Err("at least one ticker is required".into());
+    }
+    for ticker in &config.tickers {
+        if ticker.symbol.trim().is_empty() {
+            return Err("ticker symbol must not be empty".into());
+        }
+        if ticker.indicators.is_empty() {
+            return Err(format!(
+                "ticker '{}' must have at least one indicator",
+                ticker.symbol
+            )
+            .into());
+        }
+        for indicator in &ticker.indicators {
+            match indicator {
+                IndicatorConfig::Rsi(cfg) => {
+                    if !(0.0..=100.0).contains(&cfg.threshold) {
+                        return Err(format!(
+                            "RSI threshold must be between 0 and 100, got {}",
+                            cfg.threshold
+                        )
+                        .into());
+                    }
+                }
+                IndicatorConfig::Crossover(cfg) => {
+                    if cfg.fast_period >= cfg.slow_period {
+                        return Err(format!(
+                            "crossover fast_period ({}) must be less than slow_period ({})",
+                            cfg.fast_period, cfg.slow_period
+                        )
+                        .into());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -211,5 +272,96 @@ mod tests {
             }
             _ => panic!("Expected BB"),
         }
+    }
+
+    fn valid_config() -> DaemonConfig {
+        DaemonConfig {
+            ntfy_url: "https://ntfy.sh/test".to_string(),
+            interval_type: "1d".to_string(),
+            frequency_seconds: 3600,
+            db_path: None,
+            tickers: vec![TickerConfig {
+                symbol: "TEST".to_string(),
+                indicators: vec![IndicatorConfig::Rsi(RsiConfig {
+                    threshold: 30.0,
+                    period: 14,
+                })],
+            }],
+        }
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
+        assert!(validate_config(&valid_config()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_empty_ntfy_url() {
+        let mut cfg = valid_config();
+        cfg.ntfy_url = "   ".to_string();
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("ntfy_url"));
+    }
+
+    #[test]
+    fn test_validate_bad_interval() {
+        let mut cfg = valid_config();
+        cfg.interval_type = "1m".to_string();
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("interval_type"));
+    }
+
+    #[test]
+    fn test_validate_zero_frequency() {
+        let mut cfg = valid_config();
+        cfg.frequency_seconds = 0;
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("frequency_seconds"));
+    }
+
+    #[test]
+    fn test_validate_empty_tickers() {
+        let mut cfg = valid_config();
+        cfg.tickers = vec![];
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("ticker"));
+    }
+
+    #[test]
+    fn test_validate_empty_symbol() {
+        let mut cfg = valid_config();
+        cfg.tickers[0].symbol = "".to_string();
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("symbol"));
+    }
+
+    #[test]
+    fn test_validate_no_indicators() {
+        let mut cfg = valid_config();
+        cfg.tickers[0].indicators = vec![];
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("indicator"));
+    }
+
+    #[test]
+    fn test_validate_rsi_threshold_out_of_range() {
+        let mut cfg = valid_config();
+        cfg.tickers[0].indicators = vec![IndicatorConfig::Rsi(RsiConfig {
+            threshold: 150.0,
+            period: 14,
+        })];
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("RSI threshold"));
+    }
+
+    #[test]
+    fn test_validate_crossover_periods_reversed() {
+        let mut cfg = valid_config();
+        cfg.tickers[0].indicators = vec![IndicatorConfig::Crossover(CrossoverConfig {
+            fast_period: 30,
+            slow_period: 10,
+        })];
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("fast_period"));
     }
 }

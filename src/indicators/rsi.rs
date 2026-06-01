@@ -52,6 +52,10 @@ impl Indicator for RsiConfig {
     fn name(&self) -> &str {
         "RSI"
     }
+
+    fn required_bars(&self) -> usize {
+        self.period * 3
+    }
 }
 
 pub fn calculate_rsi(prices: &[f64], period: usize) -> f64 {

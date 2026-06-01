@@ -80,6 +80,10 @@ impl Indicator for CrossoverConfig {
     fn name(&self) -> &str {
         "MA Crossover"
     }
+
+    fn required_bars(&self) -> usize {
+        self.slow_period * 2
+    }
 }
 
 fn sma(prices: &[f64], period: usize) -> f64 {

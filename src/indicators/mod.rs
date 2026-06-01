@@ -10,6 +10,7 @@ pub struct IndicatorResult {
 pub trait Indicator: Send + Sync {
     fn evaluate(&self, data: &MarketData) -> IndicatorResult;
     fn name(&self) -> &str;
+    fn required_bars(&self) -> usize;
 }
 
 mod bb;
@@ -33,6 +34,15 @@ impl Indicator for IndicatorConfig {
             IndicatorConfig::BollingerBands(_) => "Bollinger Bands",
             IndicatorConfig::Macd(_) => "MACD",
             IndicatorConfig::Crossover(_) => "MA Crossover",
+        }
+    }
+
+    fn required_bars(&self) -> usize {
+        match self {
+            IndicatorConfig::Rsi(cfg) => cfg.required_bars(),
+            IndicatorConfig::BollingerBands(cfg) => cfg.required_bars(),
+            IndicatorConfig::Macd(cfg) => cfg.required_bars(),
+            IndicatorConfig::Crossover(cfg) => cfg.required_bars(),
         }
     }
 }

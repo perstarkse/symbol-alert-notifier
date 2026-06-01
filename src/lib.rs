@@ -1,13 +1,16 @@
 pub mod alert;
 pub mod config;
 pub mod data;
+pub mod db;
 pub mod indicators;
 
 use std::sync::Arc;
 
 use config::load_config;
-use data::{build_chart_url, extract_prices, YFResponse};
+use data::{build_chart_url, extract_ohlcv, YFResponse};
+use db::PriceDb;
 use indicators::Indicator;
+use tokio::sync::Mutex;
 
 pub use config::{
     BollingerBandsConfig, CrossoverConfig, DaemonConfig, IndicatorConfig, MacdConfig, RsiConfig,
@@ -16,20 +19,66 @@ pub use config::{
 pub use data::MarketData;
 pub use indicators::IndicatorResult;
 
+fn resolve_db_path(config: &DaemonConfig) -> std::path::PathBuf {
+    if let Some(ref path) = config.db_path {
+        return std::path::PathBuf::from(path);
+    }
+    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
+        let dir = std::path::PathBuf::from(data_home).join("indicator-alert-daemon");
+        return dir.join("data.db");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let dir = std::path::PathBuf::from(home).join(".local/share/indicator-alert-daemon");
+        return dir.join("data.db");
+    }
+    std::path::PathBuf::from("data.db")
+}
+
+fn compute_retain_count(config: &DaemonConfig) -> i64 {
+    let max_bars = config
+        .tickers
+        .iter()
+        .flat_map(|t| t.indicators.iter())
+        .map(|i| i.required_bars())
+        .max()
+        .unwrap_or(0) as i64;
+
+    let months_bars = match config.interval_type.as_str() {
+        "1d" => 36 * 30,
+        "1wk" => 36 * 4,
+        _ => 36 * 30,
+    };
+
+    let retain = std::cmp::min(max_bars * 2, months_bars);
+    std::cmp::max(retain, 50)
+}
+
 pub async fn run_loop(config_path: &str) {
     let config = load_config(config_path).expect("Failed to load configuration");
     let config = Arc::new(config);
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("Failed to build HTTP client");
+
+    let db_path = resolve_db_path(&config);
+    let db = PriceDb::new(&db_path).expect("Failed to open database");
+    let db = Arc::new(Mutex::new(db));
+
+    eprintln!("Database path: {}", db_path.display());
+
     loop {
-        evaluate_market(config.clone(), client.clone()).await;
+        evaluate_market(config.clone(), client.clone(), &db).await;
         tokio::time::sleep(std::time::Duration::from_secs(config.frequency_seconds)).await;
     }
 }
 
-pub async fn evaluate_market(config: Arc<DaemonConfig>, client: reqwest::Client) {
+pub async fn evaluate_market(
+    config: Arc<DaemonConfig>,
+    client: reqwest::Client,
+    db: &Mutex<PriceDb>,
+) {
     println!("Beginning cycle evaluation across targets...");
 
     let mut total_indicators = 0u32;
@@ -39,7 +88,14 @@ pub async fn evaluate_market(config: Arc<DaemonConfig>, client: reqwest::Client)
     for ticker in &config.tickers {
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
-        let url = build_chart_url(&ticker.symbol, &config.interval_type);
+        let need_full_fetch = {
+            let db = db.lock().await;
+            db.latest_timestamp(&ticker.symbol, &config.interval_type)
+                .unwrap_or(None)
+                .is_none()
+        };
+
+        let url = build_chart_url(&ticker.symbol, &config.interval_type, need_full_fetch);
 
         let res = match client
             .get(&url)
@@ -55,52 +111,122 @@ pub async fn evaluate_market(config: Arc<DaemonConfig>, client: reqwest::Client)
             }
         };
 
-        if let Ok(yf_resp) = res.json::<YFResponse>().await {
-            if let Some(results) = yf_resp.chart.result {
-                if let Some(quote) = results.first().map(|r| &r.indicators.quote) {
-                    if let Some(raw_closes) = quote.first().map(|q| &q.close) {
-                        let prices = extract_prices(raw_closes);
-                        if prices.len() < 2 {
-                            continue;
-                        }
+        let yf_resp = match res.json::<YFResponse>().await {
+            Ok(r) => r,
+            Err(e) => {
+                println!("[{}] Failed to parse response: {}", ticker.symbol, e);
+                total_failures += 1;
+                continue;
+            }
+        };
 
-                        let current_price = prices[prices.len() - 1];
-                        let mut log_parts = vec![
-                            format!("[{}]", ticker.symbol),
-                            format!("Price: ${:.2}", current_price),
-                        ];
+        let results = match yf_resp.chart.result {
+            Some(r) if !r.is_empty() => r,
+            _ => {
+                println!("[{}] No chart data returned.", ticker.symbol);
+                total_failures += 1;
+                continue;
+            }
+        };
 
-                        let market_data = MarketData {
-                            symbol: ticker.symbol.clone(),
-                            close_prices: prices,
-                            interval_type: config.interval_type.clone(),
-                        };
+        let chart_result = &results[0];
+        let timestamps = &chart_result.timestamp;
 
-                        for indicator_cfg in &ticker.indicators {
-                            total_indicators += 1;
-                            let result = indicator_cfg.evaluate(&market_data);
-                            log_parts.push(result.log_label);
+        let quote = match chart_result.indicators.quote.first() {
+            Some(q) => q,
+            None => {
+                println!("[{}] No quote data returned.", ticker.symbol);
+                total_failures += 1;
+                continue;
+            }
+        };
 
-                            if result.triggered {
-                                total_triggered += 1;
-                            }
+        let ohlcv_rows = extract_ohlcv(timestamps, quote);
 
-                            if let Some(msg) = result.alert_message {
-                                alert::send_alert(
-                                    &client,
-                                    &config.ntfy_url,
-                                    &ticker.symbol,
-                                    indicator_cfg.name(),
-                                    msg,
-                                )
-                                .await;
-                            }
-                        }
+        {
+            let db = db.lock().await;
+            if let Err(e) = db.insert_ohlcv(&ticker.symbol, &config.interval_type, &ohlcv_rows) {
+                eprintln!("[{}] DB insert error: {}", ticker.symbol, e);
+            }
+        }
 
-                        println!("{}", log_parts.join(" | "));
-                    }
+        let prices = {
+            let db = db.lock().await;
+            db.load_close_prices(&ticker.symbol, &config.interval_type)
+                .unwrap_or_default()
+        };
+
+        if prices.len() < 2 {
+            continue;
+        }
+
+        let current_price = prices[prices.len() - 1];
+        let mut log_parts = vec![
+            format!("[{}]", ticker.symbol),
+            format!("Price: ${:.2}", current_price),
+        ];
+
+        let market_data = MarketData {
+            symbol: ticker.symbol.clone(),
+            close_prices: prices,
+            interval_type: config.interval_type.clone(),
+        };
+
+        for indicator_cfg in &ticker.indicators {
+            total_indicators += 1;
+            let result = indicator_cfg.evaluate(&market_data);
+            log_parts.push(result.log_label);
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+
+            let config_json = serde_json::to_string(indicator_cfg).unwrap_or_default();
+
+            let should_alert = {
+                let db = db.lock().await;
+
+                let prev = db
+                    .last_indicator_result(&ticker.symbol, indicator_cfg.name(), &config_json)
+                    .unwrap_or(None);
+
+                let _ = db.store_indicator_result(
+                    &ticker.symbol,
+                    indicator_cfg.name(),
+                    &config_json,
+                    now,
+                    None,
+                    None,
+                    result.triggered,
+                );
+
+                result.triggered && prev.map(|(_, _, t)| !t).unwrap_or(true)
+            };
+
+            if should_alert {
+                total_triggered += 1;
+                if let Some(msg) = result.alert_message {
+                    alert::send_alert(
+                        &client,
+                        &config.ntfy_url,
+                        &ticker.symbol,
+                        indicator_cfg.name(),
+                        msg,
+                    )
+                    .await;
                 }
             }
+        }
+
+        println!("{}", log_parts.join(" | "));
+    }
+
+    let retain = compute_retain_count(&config);
+    {
+        let db = db.lock().await;
+        if let Err(e) = db.purge_old_data(retain) {
+            eprintln!("DB purge error: {}", e);
         }
     }
 
@@ -114,6 +240,93 @@ pub async fn evaluate_market(config: Arc<DaemonConfig>, client: reqwest::Client)
 mod tests {
     use super::*;
     use crate::config::TickerConfig;
+    use tempfile::TempDir;
+
+    fn test_config() -> DaemonConfig {
+        DaemonConfig {
+            ntfy_url: "http://localhost:1".to_string(),
+            interval_type: "1d".to_string(),
+            frequency_seconds: 3600,
+            db_path: None,
+            tickers: vec![TickerConfig {
+                symbol: "INVALID".to_string(),
+                indicators: vec![IndicatorConfig::Rsi(RsiConfig {
+                    threshold: 35.0,
+                    period: 14,
+                })],
+            }],
+        }
+    }
+
+    #[test]
+    fn test_resolve_db_path_from_config() {
+        let mut config = test_config();
+        config.db_path = Some("/tmp/test.db".to_string());
+        let path = resolve_db_path(&config);
+        assert_eq!(path, std::path::PathBuf::from("/tmp/test.db"));
+    }
+
+    #[test]
+    fn test_resolve_db_path_xdg_fallback() {
+        let config = test_config();
+        let path = resolve_db_path(&config);
+        // Should resolve to some path since HOME is set in test env
+        assert!(path.ends_with("data.db"));
+    }
+
+    #[test]
+    fn test_compute_retain_count_default() {
+        let config = test_config();
+        // RSI(14) -> required_bars = 42, *2 = 84, cap 1080 -> max(84, 50) = 84
+        assert_eq!(compute_retain_count(&config), 84);
+    }
+
+    #[test]
+    fn test_compute_retain_count_weekly() {
+        let mut config = test_config();
+        config.interval_type = "1wk".to_string();
+        // 36 months * 4 weeks = 144 bars cap
+        // RSI(14) -> 42, *2 = 84, cap 144 -> 84 (cap not hit)
+        assert_eq!(compute_retain_count(&config), 84);
+    }
+
+    #[test]
+    fn test_compute_retain_count_daily_cap_kicks_in() {
+        let config = DaemonConfig {
+            ntfy_url: "http://localhost:1".to_string(),
+            interval_type: "1d".to_string(),
+            frequency_seconds: 3600,
+            db_path: None,
+            tickers: vec![TickerConfig {
+                symbol: "T".to_string(),
+                indicators: vec![IndicatorConfig::Rsi(RsiConfig {
+                    threshold: 30.0,
+                    period: 1000,
+                })],
+            }],
+        };
+        // RSI(1000) -> 3000, *2 = 6000, cap 1080 -> 1080
+        assert_eq!(compute_retain_count(&config), 1080);
+    }
+
+    #[test]
+    fn test_compute_retain_count_minimum_floor() {
+        let config = DaemonConfig {
+            ntfy_url: "http://localhost:1".to_string(),
+            interval_type: "1d".to_string(),
+            frequency_seconds: 3600,
+            db_path: None,
+            tickers: vec![TickerConfig {
+                symbol: "T".to_string(),
+                indicators: vec![IndicatorConfig::Rsi(RsiConfig {
+                    threshold: 30.0,
+                    period: 2,
+                })],
+            }],
+        };
+        // RSI(2) -> required_bars = 6, *2 = 12, floor at 50
+        assert_eq!(compute_retain_count(&config), 50);
+    }
 
     #[tokio::test]
     async fn test_evaluate_market_handles_network_error() {
@@ -121,6 +334,7 @@ mod tests {
             ntfy_url: "http://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
+            db_path: None,
             tickers: vec![TickerConfig {
                 symbol: "INVALID".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -133,7 +347,11 @@ mod tests {
             .timeout(std::time::Duration::from_secs(1))
             .build()
             .unwrap();
-        evaluate_market(config, client).await;
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = PriceDb::new(&db_path).unwrap();
+        let db = Arc::new(Mutex::new(db));
+        evaluate_market(config, client, &db).await;
     }
 
     #[tokio::test]
@@ -142,6 +360,7 @@ mod tests {
             ntfy_url: "http://localhost:1".to_string(),
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
+            db_path: None,
             tickers: vec![
                 TickerConfig {
                     symbol: "AAA".to_string(),
@@ -163,12 +382,67 @@ mod tests {
             .timeout(std::time::Duration::from_secs(1))
             .build()
             .unwrap();
-        evaluate_market(config, client).await;
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = PriceDb::new(&db_path).unwrap();
+        let db = Arc::new(Mutex::new(db));
+        evaluate_market(config, client, &db).await;
     }
 
     #[tokio::test]
     #[should_panic(expected = "Failed to load configuration")]
     async fn test_run_loop_invalid_path() {
         run_loop("/tmp/nonexistent-config.json").await;
+    }
+
+    #[tokio::test]
+    async fn test_indicator_result_state_transition_alert_suppression() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = PriceDb::new(&db_path).unwrap();
+        let db = Arc::new(Mutex::new(db));
+
+        let cfg = IndicatorConfig::Rsi(RsiConfig {
+            threshold: 30.0,
+            period: 14,
+        });
+        let config_json = serde_json::to_string(&cfg).unwrap();
+
+        // First evaluation with triggered=true
+        {
+            let db = db.lock().await;
+            db.store_indicator_result("SYM", "RSI", &config_json, 100, None, None, true)
+                .unwrap();
+        }
+
+        // prev_triggered should be true → new trigger should be suppressed
+        let prev_triggered = {
+            let db = db.lock().await;
+            db.last_indicator_result("SYM", "RSI", &config_json)
+                .unwrap()
+                .map(|(_, _, t)| t)
+        };
+        assert_eq!(prev_triggered, Some(true));
+        let should_alert = true && prev_triggered.map(|t| !t).unwrap_or(true);
+        assert!(!should_alert);
+
+        // Condition clears → store triggered=false
+        {
+            let db = db.lock().await;
+            db.store_indicator_result("SYM", "RSI", &config_json, 200, None, None, false)
+                .unwrap();
+        }
+
+        let prev_triggered = {
+            let db = db.lock().await;
+            db.last_indicator_result("SYM", "RSI", &config_json)
+                .unwrap()
+                .map(|(_, _, t)| t)
+        };
+        assert_eq!(prev_triggered, Some(false));
+
+        // New trigger should fire (state change: false → true)
+        let should_alert = true && prev_triggered.map(|t| !t).unwrap_or(true);
+        assert!(should_alert);
     }
 }

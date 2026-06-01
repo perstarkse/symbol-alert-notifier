@@ -10,6 +10,7 @@ let
     interval_type = cfg.intervalType;
     frequency_seconds = cfg.pollFrequency;
     tickers = cfg.tickers;
+    db_path = "/var/lib/indicator-alert-daemon/data.db";
   };
 in
 {
@@ -55,6 +56,7 @@ in
         RestartSec = "30";
 
         DynamicUser = true;
+        StateDirectory = "indicator-alert-daemon";
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;

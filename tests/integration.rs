@@ -1,4 +1,6 @@
-use indicator_alert_daemon::data::{build_chart_url, extract_prices};
+use indicator_alert_daemon::data::{
+    build_chart_url, extract_ohlcv, extract_prices, OhlcvRow, YFQuote,
+};
 use indicator_alert_daemon::indicators::{self, Indicator};
 use indicator_alert_daemon::*;
 
@@ -83,10 +85,77 @@ fn test_binary_fails_with_bad_config() {
 }
 
 #[test]
-fn test_build_chart_url_format() {
-    let url = build_chart_url("BOTZ", "1d");
+fn test_build_chart_url_format_full() {
+    let url = build_chart_url("BOTZ", "1d", true);
     assert_eq!(
         url,
         "https://query1.finance.yahoo.com/v8/finance/chart/BOTZ?range=6mo&interval=1d"
     );
+}
+
+#[test]
+fn test_build_chart_url_format_incremental() {
+    let url = build_chart_url("BOTZ", "1d", false);
+    assert_eq!(
+        url,
+        "https://query1.finance.yahoo.com/v8/finance/chart/BOTZ?range=1mo&interval=1d"
+    );
+}
+
+#[test]
+fn test_ohlcv_row_creation() {
+    let row = OhlcvRow {
+        ts: 1234567890,
+        open: Some(100.0),
+        high: Some(105.0),
+        low: Some(99.0),
+        close: 102.5,
+        volume: Some(10000.0),
+    };
+    assert_eq!(row.ts, 1234567890);
+    assert!((row.close - 102.5).abs() < 0.001);
+}
+
+#[test]
+fn test_extract_ohlcv_from_quote() {
+    let timestamps = vec![100, 200, 300];
+    let quote = YFQuote {
+        open: vec![Some(10.0), Some(11.0), Some(12.0)],
+        high: vec![Some(12.0), Some(13.0), Some(14.0)],
+        low: vec![Some(9.0), Some(10.0), Some(11.0)],
+        close: vec![Some(10.5), Some(11.5), Some(12.5)],
+        volume: vec![Some(1000.0), Some(2000.0), Some(3000.0)],
+    };
+    let rows = extract_ohlcv(&timestamps, &quote);
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[1].ts, 200);
+    assert!((rows[1].close - 11.5).abs() < 0.001);
+}
+
+#[test]
+fn test_indicator_required_bars() {
+    let rsi = IndicatorConfig::Rsi(RsiConfig {
+        threshold: 30.0,
+        period: 14,
+    });
+    assert_eq!(rsi.required_bars(), 42);
+
+    let bb = IndicatorConfig::BollingerBands(BollingerBandsConfig {
+        period: 20,
+        stddev: 2.0,
+    });
+    assert_eq!(bb.required_bars(), 40);
+
+    let macd = IndicatorConfig::Macd(MacdConfig {
+        fast: 12,
+        slow: 26,
+        signal: 9,
+    });
+    assert_eq!(macd.required_bars(), 47);
+
+    let cross = IndicatorConfig::Crossover(CrossoverConfig {
+        fast_period: 5,
+        slow_period: 15,
+    });
+    assert_eq!(cross.required_bars(), 30);
 }

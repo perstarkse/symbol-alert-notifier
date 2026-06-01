@@ -6,12 +6,18 @@ pub async fn send_alert(
     message: String,
 ) {
     let title = format!("Alert: {} - {}", indicator_name, symbol);
-    let _ = client
+    if let Err(e) = client
         .post(ntfy_url)
         .header("Title", &title)
         .header("Priority", "high")
         .header("Tags", "chart_with_downwards_trend,moneybag")
         .body(message)
         .send()
-        .await;
+        .await
+    {
+        eprintln!(
+            "[{}] Failed to send {} alert: {}",
+            symbol, indicator_name, e
+        );
+    }
 }

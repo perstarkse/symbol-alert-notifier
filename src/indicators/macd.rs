@@ -69,6 +69,10 @@ impl Indicator for MacdConfig {
     fn name(&self) -> &str {
         "MACD"
     }
+
+    fn required_bars(&self) -> usize {
+        self.slow + self.signal + self.fast
+    }
 }
 
 fn ema(values: &[f64], period: usize) -> f64 {
