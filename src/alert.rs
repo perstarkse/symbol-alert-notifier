@@ -1,3 +1,4 @@
+#[tracing::instrument(skip(client, message))]
 pub async fn send_alert(
     client: &reqwest::Client,
     ntfy_url: &str,
@@ -15,9 +16,11 @@ pub async fn send_alert(
         .send()
         .await
     {
-        eprintln!(
-            "[{}] Failed to send {} alert: {}",
-            symbol, indicator_name, e
+        tracing::error!(
+            symbol,
+            indicator = indicator_name,
+            error = %e,
+            "Failed to send alert"
         );
     }
 }

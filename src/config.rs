@@ -10,6 +10,12 @@ pub struct DaemonConfig {
     pub tickers: Vec<TickerConfig>,
     #[serde(default)]
     pub db_path: Option<String>,
+    #[serde(default = "default_ticker_delay")]
+    pub ticker_delay_ms: u64,
+}
+
+const fn default_ticker_delay() -> u64 {
+    1500
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,6 +286,7 @@ mod tests {
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
+            ticker_delay_ms: 1500,
             tickers: vec![TickerConfig {
                 symbol: "TEST".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {

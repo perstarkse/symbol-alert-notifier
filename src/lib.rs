@@ -5,6 +5,7 @@ pub mod db;
 pub mod indicators;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use config::load_config;
 use data::{build_chart_url, extract_ohlcv, YFResponse};
@@ -53,12 +54,48 @@ fn compute_retain_count(config: &DaemonConfig) -> i64 {
     std::cmp::max(retain, 50)
 }
 
+async fn fetch_yahoo_chart(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<YFResponse, String> {
+    let max_retries = 3;
+    let mut attempt = 0u32;
+    loop {
+        match client
+            .get(url)
+            .header("User-Agent", "Mozilla/5.0")
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                return resp.json::<YFResponse>().await.map_err(|e| {
+                    format!("Failed to parse response: {e}")
+                });
+            }
+            Err(e) => {
+                attempt += 1;
+                if attempt >= max_retries {
+                    return Err(format!("Network error after {max_retries} retries: {e}"));
+                }
+                let delay = Duration::from_millis(500 * 2u64.pow(attempt));
+                tracing::warn!(
+                    attempt,
+                    delay_ms = delay.as_millis(),
+                    error = %e,
+                    "Retrying Yahoo Finance fetch"
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
 pub async fn run_loop(config_path: &str) {
     let config = load_config(config_path).expect("Failed to load configuration");
     let config = Arc::new(config);
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(Duration::from_secs(10))
         .build()
         .expect("Failed to build HTTP client");
 
@@ -66,27 +103,47 @@ pub async fn run_loop(config_path: &str) {
     let db = PriceDb::new(&db_path).expect("Failed to open database");
     let db = Arc::new(Mutex::new(db));
 
-    eprintln!("Database path: {}", db_path.display());
+    tracing::info!(path = %db_path.display(), "Database opened");
+
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("Failed to install SIGTERM handler");
+    let mut int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .expect("Failed to install SIGINT handler");
 
     loop {
-        evaluate_market(config.clone(), client.clone(), &db).await;
-        tokio::time::sleep(std::time::Duration::from_secs(config.frequency_seconds)).await;
+        tokio::select! {
+            _ = term.recv() => {
+                tracing::info!("Received SIGTERM, shutting down");
+                break;
+            }
+            _ = int.recv() => {
+                tracing::info!("Received SIGINT, shutting down");
+                break;
+            }
+            _ = async {
+                evaluate_market(config.clone(), client.clone(), &db).await;
+                tokio::time::sleep(Duration::from_secs(config.frequency_seconds)).await;
+            } => {}
+        }
     }
+
+    tracing::info!("Shutdown complete");
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn evaluate_market(
     config: Arc<DaemonConfig>,
     client: reqwest::Client,
     db: &Mutex<PriceDb>,
 ) {
-    println!("Beginning cycle evaluation across targets...");
+    tracing::info!("Beginning cycle evaluation across targets");
 
     let mut total_indicators = 0u32;
     let mut total_triggered = 0u32;
     let mut total_failures = 0u32;
 
     for ticker in &config.tickers {
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        tokio::time::sleep(Duration::from_millis(config.ticker_delay_ms)).await;
 
         let need_full_fetch = {
             let db = db.lock().await;
@@ -97,24 +154,10 @@ pub async fn evaluate_market(
 
         let url = build_chart_url(&ticker.symbol, &config.interval_type, need_full_fetch);
 
-        let res = match client
-            .get(&url)
-            .header("User-Agent", "Mozilla/5.0")
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(_) => {
-                println!("[{}] Network connection failed.", ticker.symbol);
-                total_failures += 1;
-                continue;
-            }
-        };
-
-        let yf_resp = match res.json::<YFResponse>().await {
+        let yf_resp = match fetch_yahoo_chart(&client, &url).await {
             Ok(r) => r,
             Err(e) => {
-                println!("[{}] Failed to parse response: {}", ticker.symbol, e);
+                tracing::error!(symbol = %ticker.symbol, error = %e, "Failed to fetch chart data");
                 total_failures += 1;
                 continue;
             }
@@ -123,7 +166,7 @@ pub async fn evaluate_market(
         let results = match yf_resp.chart.result {
             Some(r) if !r.is_empty() => r,
             _ => {
-                println!("[{}] No chart data returned.", ticker.symbol);
+                tracing::warn!(symbol = %ticker.symbol, "No chart data returned");
                 total_failures += 1;
                 continue;
             }
@@ -135,7 +178,7 @@ pub async fn evaluate_market(
         let quote = match chart_result.indicators.quote.first() {
             Some(q) => q,
             None => {
-                println!("[{}] No quote data returned.", ticker.symbol);
+                tracing::warn!(symbol = %ticker.symbol, "No quote data returned");
                 total_failures += 1;
                 continue;
             }
@@ -146,7 +189,7 @@ pub async fn evaluate_market(
         {
             let db = db.lock().await;
             if let Err(e) = db.insert_ohlcv(&ticker.symbol, &config.interval_type, &ohlcv_rows) {
-                eprintln!("[{}] DB insert error: {}", ticker.symbol, e);
+                tracing::error!(symbol = %ticker.symbol, error = %e, "DB insert error");
             }
         }
 
@@ -219,20 +262,19 @@ pub async fn evaluate_market(
             }
         }
 
-        println!("{}", log_parts.join(" | "));
+        tracing::info!("{}", log_parts.join(" | "));
     }
 
     let retain = compute_retain_count(&config);
     {
         let db = db.lock().await;
         if let Err(e) = db.purge_old_data(retain) {
-            eprintln!("DB purge error: {}", e);
+            tracing::error!(error = %e, "DB purge error");
         }
     }
 
-    println!(
-        "Cycle complete — {} indicators evaluated, {} triggered, {} failures.",
-        total_indicators, total_triggered, total_failures
+    tracing::info!(
+        "Cycle complete — {total_indicators} indicators evaluated, {total_triggered} triggered, {total_failures} failures"
     );
 }
 
@@ -248,6 +290,7 @@ mod tests {
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
+            ticker_delay_ms: 1500,
             tickers: vec![TickerConfig {
                 symbol: "INVALID".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -297,6 +340,7 @@ mod tests {
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
+            ticker_delay_ms: 1500,
             tickers: vec![TickerConfig {
                 symbol: "T".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -316,6 +360,7 @@ mod tests {
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
+            ticker_delay_ms: 1500,
             tickers: vec![TickerConfig {
                 symbol: "T".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -335,6 +380,7 @@ mod tests {
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
+            ticker_delay_ms: 1500,
             tickers: vec![TickerConfig {
                 symbol: "INVALID".to_string(),
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
@@ -361,6 +407,7 @@ mod tests {
             interval_type: "1d".to_string(),
             frequency_seconds: 3600,
             db_path: None,
+            ticker_delay_ms: 1500,
             tickers: vec![
                 TickerConfig {
                     symbol: "AAA".to_string(),

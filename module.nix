@@ -5,13 +5,16 @@ with lib;
 let
   cfg = config.services.indicator-alert-daemon;
   format = pkgs.formats.json { };
-  configFile = format.generate "indicator-alert-daemon.json" {
-    ntfy_url = cfg.ntfyUrl;
-    interval_type = cfg.intervalType;
-    frequency_seconds = cfg.pollFrequency;
-    tickers = cfg.tickers;
-    db_path = "/var/lib/indicator-alert-daemon/data.db";
-  };
+  configFile = format.generate "indicator-alert-daemon.json" (
+    {
+      ntfy_url = cfg.ntfyUrl;
+      interval_type = cfg.intervalType;
+      frequency_seconds = cfg.pollFrequency;
+      ticker_delay_ms = cfg.tickerDelayMs;
+      tickers = cfg.tickers;
+    }
+    // lib.optionalAttrs (cfg.dbPath != null) { db_path = cfg.dbPath; }
+  );
 in
 {
   options.services.indicator-alert-daemon = {
@@ -30,16 +33,36 @@ in
       default = 86400;
       description = "Polling frequency in seconds";
     };
+    tickerDelayMs = mkOption {
+      type = types.int;
+      default = 1500;
+      description = "Delay between ticker fetches in milliseconds";
+    };
+    dbPath = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Path to the SQLite database file (default: under /var/lib/indicator-alert-daemon)";
+    };
     tickers = mkOption {
-      type = types.listOf types.attrs;
+      type = types.listOf (types.submodule {
+        options = {
+          symbol = mkOption {
+            type = types.str;
+            description = "Ticker symbol";
+          };
+          indicators = mkOption {
+            type = types.listOf (types.attrsOf types.anything);
+            description = ''
+              List of indicator configurations. Each entry is an attrset
+              with at least a `type` field, e.g.
+              `{ type = "rsi"; threshold = 35.0; period = 14; }` or
+              `{ type = "bollinger_bands"; period = 20; stddev = 2.0; }`.
+            '';
+          };
+        };
+      });
       default = [ ];
-      description = ''
-        Tickers with indicator configurations. Each entry is an attrset
-        with `symbol` (string) and `indicators` (list of indicator configs).
-        Each indicator config requires a `type` field, e.g.
-        `{ type = "rsi"; threshold = 35.0; }` or
-        `{ type = "bollinger_bands"; period = 20; stddev = 2.0; }`.
-      '';
+      description = "Tickers with indicator configurations";
     };
   };
 
