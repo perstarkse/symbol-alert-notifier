@@ -10,6 +10,8 @@
   rustTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget or pkgs.stdenv.hostPlatform.config;
   llvmToolsBin = "${llvmTools}/lib/rustlib/${rustTarget}/bin";
 in {
+  devenv.warnOnNewVersion = false;
+
   packages = [
     pkgs.git
     pkgs.curl
