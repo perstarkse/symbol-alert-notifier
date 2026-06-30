@@ -3,41 +3,37 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    git-hooks-nix.url = "github:cachix/git-hooks.nix";
+    git-hooks-nix.inputs.nixpkgs.follows = "nixpkgs";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
+    fenix.url = "github:nix-community/fenix";
+    fenix.inputs.nixpkgs.follows = "nixpkgs";
+    crane.url = "github:ipetkov/crane";
+    crane.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
-    { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = import nixpkgs { inherit system; };
-        rustPlatform = pkgs.rustPlatform;
-      in
-      {
-        packages = {
-          default = rustPlatform.buildRustPackage {
-            pname = "indicator-alert-daemon";
-            version = "0.1.0";
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
+    inputs@{ self, nixpkgs, flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
 
-            meta = {
-              description = "Daemon monitoring market indicators for ticker alerts";
-              license = pkgs.lib.licenses.mit;
-              maintainers = [ ];
-            };
-          };
-        };
+      imports = [
+        ./nix/modules/context.nix
+        ./nix/modules/packages.nix
+        ./nix/modules/formatter.nix
+        ./nix/modules/checks.nix
+        ./nix/modules/dev-shell.nix
+      ];
 
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ cargo rustc rustfmt clippy ];
-          RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
-        };
-      }
-    ) // {
-      nixosModules = {
-        default = import ./module.nix self;
+      flake = {
+        nixosModules.default = import ./nix/nixos/default.nix self;
       };
     };
 }

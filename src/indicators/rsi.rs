@@ -1,5 +1,5 @@
 use crate::config::RsiConfig;
-use crate::data::{calculate_price_change, MarketData};
+use crate::data::{MarketData, calculate_price_change};
 use crate::indicators::{Indicator, IndicatorResult};
 
 impl Indicator for RsiConfig {

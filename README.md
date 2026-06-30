@@ -135,27 +135,38 @@ lib.rs               — run loop, signal handling, market evaluation
 
 ## Development
 
-The recommended development environment uses [devenv](https://devenv.sh/), auto-activated by direnv on entering the project directory:
+The recommended development environment uses Nix and `direnv`. To activate the developer shell automatically upon entering the directory:
 
 ```
-direnv allow           # activates the devenv shell automatically
+direnv allow
 ```
 
-Alternatively, use the Nix flake dev shell:
+Alternatively, you can manually enter the developer shell:
 
 ```
 nix develop
 ```
 
-Then the usual Rust commands:
+Then the usual Rust commands are available:
 
 ```
 cargo test
 cargo clippy
 cargo fmt
+cargo llvm-cov
 ```
 
-The test suite requires `cargo-llvm-cov` for coverage checks (90% threshold).
+To run all formatting, linting, tests, and coverage checks hermetically, run:
+
+```
+nix flake check
+```
+
+Or to format the entire project:
+
+```
+nix fmt
+```
 
 ## NixOS module
 

@@ -18,18 +18,18 @@ pub use config::{
     BollingerBandsConfig, CrossoverConfig, DaemonConfig, IndicatorConfig, MacdConfig, RsiConfig,
     TickerConfig,
 };
-pub use data::{extract_prices, MarketData, OhlcvRow};
+pub use data::{MarketData, OhlcvRow, extract_prices};
 pub use indicators::IndicatorResult;
-pub use yahoo::{build_chart_url, YFQuote};
+pub use yahoo::{YFQuote, build_chart_url};
 
 fn resolve_db_path(config: &DaemonConfig) -> std::path::PathBuf {
     if let Some(ref path) = config.db_path {
         return std::path::PathBuf::from(path);
     }
-    if let Ok(db_path) = std::env::var("DB_PATH") {
-        if !db_path.trim().is_empty() {
-            return std::path::PathBuf::from(db_path.trim());
-        }
+    if let Ok(db_path) = std::env::var("DB_PATH")
+        && !db_path.trim().is_empty()
+    {
+        return std::path::PathBuf::from(db_path.trim());
     }
     if let Ok(state_dir) = std::env::var("STATE_DIRECTORY") {
         let dir = std::path::PathBuf::from(state_dir);
@@ -82,9 +82,10 @@ async fn fetch_yahoo_chart(
             .await
         {
             Ok(resp) => {
-                return resp.json::<yahoo::YFResponse>().await.map_err(|e| {
-                    format!("Failed to parse response: {e}")
-                });
+                return resp
+                    .json::<yahoo::YFResponse>()
+                    .await
+                    .map_err(|e| format!("Failed to parse response: {e}"));
             }
             Err(e) => {
                 attempt += 1;
@@ -168,7 +169,14 @@ pub async fn evaluate_market(
 
         let url = build_chart_url(&ticker.symbol, &config.interval_type, need_full_fetch);
 
-        let yf_resp = match fetch_yahoo_chart(&client, &url, config.max_retries, config.retry_base_delay_ms).await {
+        let yf_resp = match fetch_yahoo_chart(
+            &client,
+            &url,
+            config.max_retries,
+            config.retry_base_delay_ms,
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(symbol = %ticker.symbol, error = %e, "Failed to fetch chart data");
@@ -494,7 +502,7 @@ mod tests {
                 .map(|(_, _, t)| t)
         };
         assert_eq!(prev_triggered, Some(true));
-        let should_alert = true && prev_triggered.map(|t| !t).unwrap_or(true);
+        let should_alert = prev_triggered.map(|t| !t).unwrap_or(true);
         assert!(!should_alert);
 
         // Condition clears → store triggered=false
@@ -513,7 +521,7 @@ mod tests {
         assert_eq!(prev_triggered, Some(false));
 
         // New trigger should fire (state change: false → true)
-        let should_alert = true && prev_triggered.map(|t| !t).unwrap_or(true);
+        let should_alert = prev_triggered.map(|t| !t).unwrap_or(true);
         assert!(should_alert);
     }
 }

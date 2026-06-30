@@ -1,6 +1,6 @@
-use indicator_alert_daemon::data::{extract_ohlcv, extract_prices, OhlcvRow};
-use indicator_alert_daemon::yahoo::{build_chart_url, YFQuote};
+use indicator_alert_daemon::data::{OhlcvRow, extract_ohlcv, extract_prices};
 use indicator_alert_daemon::indicators::{self, Indicator};
+use indicator_alert_daemon::yahoo::{YFQuote, build_chart_url};
 use indicator_alert_daemon::*;
 
 #[test]

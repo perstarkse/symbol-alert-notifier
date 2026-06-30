@@ -108,15 +108,15 @@ pub fn load_config(path: &str) -> Result<DaemonConfig, Box<dyn std::error::Error
 }
 
 fn apply_env_overrides(config: &mut DaemonConfig) {
-    if let Ok(val) = std::env::var("NTFY_URL") {
-        if !val.trim().is_empty() {
-            config.ntfy_url = val.trim().to_string();
-        }
+    if let Ok(val) = std::env::var("NTFY_URL")
+        && !val.trim().is_empty()
+    {
+        config.ntfy_url = val.trim().to_string();
     }
-    if let Ok(val) = std::env::var("DB_PATH") {
-        if !val.trim().is_empty() {
-            config.db_path = Some(val.trim().to_string());
-        }
+    if let Ok(val) = std::env::var("DB_PATH")
+        && !val.trim().is_empty()
+    {
+        config.db_path = Some(val.trim().to_string());
     }
     if let Ok(val) = std::env::var("INTERVAL_TYPE") {
         let trimmed = val.trim().to_string();
@@ -124,15 +124,15 @@ fn apply_env_overrides(config: &mut DaemonConfig) {
             config.interval_type = trimmed;
         }
     }
-    if let Ok(val) = std::env::var("FREQUENCY_SECONDS") {
-        if let Ok(parsed) = val.trim().parse::<u64>() {
-            config.frequency_seconds = parsed;
-        }
+    if let Ok(val) = std::env::var("FREQUENCY_SECONDS")
+        && let Ok(parsed) = val.trim().parse::<u64>()
+    {
+        config.frequency_seconds = parsed;
     }
-    if let Ok(val) = std::env::var("TICKER_DELAY_MS") {
-        if let Ok(parsed) = val.trim().parse::<u64>() {
-            config.ticker_delay_ms = parsed;
-        }
+    if let Ok(val) = std::env::var("TICKER_DELAY_MS")
+        && let Ok(parsed) = val.trim().parse::<u64>()
+    {
+        config.ticker_delay_ms = parsed;
     }
 }
 
@@ -185,14 +185,12 @@ fn validate_config(config: &DaemonConfig) -> Result<(), Box<dyn std::error::Erro
                         .into());
                     }
                 }
-                IndicatorConfig::Crossover(cfg) => {
-                    if cfg.fast_period >= cfg.slow_period {
-                        return Err(format!(
-                            "crossover fast_period ({}) must be less than slow_period ({})",
-                            cfg.fast_period, cfg.slow_period
-                        )
-                        .into());
-                    }
+                IndicatorConfig::Crossover(cfg) if cfg.fast_period >= cfg.slow_period => {
+                    return Err(format!(
+                        "crossover fast_period ({}) must be less than slow_period ({})",
+                        cfg.fast_period, cfg.slow_period
+                    )
+                    .into());
                 }
                 _ => {}
             }
@@ -363,7 +361,11 @@ mod tests {
         let mut cfg = valid_config();
         cfg.ntfy_url = "http://ntfy.sh/test".to_string();
         let err = validate_config(&cfg).unwrap_err();
-        assert!(err.to_string().contains("https"), "expected scheme error, got: {}", err);
+        assert!(
+            err.to_string().contains("https"),
+            "expected scheme error, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -371,7 +373,11 @@ mod tests {
         let mut cfg = valid_config();
         cfg.ntfy_url = "https://".to_string();
         let err = validate_config(&cfg).unwrap_err();
-        assert!(err.to_string().contains("valid URL"), "expected URL parse error, got: {}", err);
+        assert!(
+            err.to_string().contains("valid URL"),
+            "expected URL parse error, got: {}",
+            err
+        );
     }
 
     #[test]

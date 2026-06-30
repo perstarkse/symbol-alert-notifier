@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 
 pub struct PriceDb {
@@ -9,10 +9,10 @@ pub struct PriceDb {
 impl PriceDb {
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let db_path = db_path.as_ref().to_path_buf();
-        if let Some(parent) = db_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = db_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(&db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
@@ -127,6 +127,7 @@ impl PriceDb {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn store_indicator_result(
         &self,
         symbol: &str,
@@ -155,6 +156,7 @@ impl PriceDb {
     }
 
     #[allow(dead_code)]
+    #[allow(clippy::type_complexity)]
     pub fn last_indicator_result(
         &self,
         symbol: &str,
