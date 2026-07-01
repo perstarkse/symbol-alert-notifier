@@ -28,11 +28,17 @@
           pkgs.cargo-llvm-cov
           pkgs.git
           pkgs.curl
+          pkgs.mold
+          pkgs.clang
         ];
 
         env = {
           LLVM_COV = "${llvmToolsBin}/llvm-cov";
           LLVM_PROFDATA = "${llvmToolsBin}/llvm-profdata";
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "clang";
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "clang";
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
         };
 
         shellHook = ''
