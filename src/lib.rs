@@ -57,11 +57,18 @@ fn compute_retain_count(config: &DaemonConfig) -> i64 {
         .max()
         .unwrap_or(0) as i64;
 
-    let months_bars = match config.interval_type.as_str() {
-        "1d" => 36 * 30,
-        "1wk" => 36 * 4,
-        _ => 36 * 30,
-    };
+    let months_bars = config
+        .tickers
+        .iter()
+        .map(|t| match t.effective_interval(&config.interval_type) {
+            "1wk" => 36 * 4,
+            _ => 36 * 30,
+        })
+        .max()
+        .unwrap_or(match config.interval_type.as_str() {
+            "1wk" => 36 * 4,
+            _ => 36 * 30,
+        });
 
     let retain = std::cmp::min(max_bars * 2, months_bars);
     std::cmp::max(retain, 50)
@@ -160,14 +167,16 @@ pub async fn evaluate_market(
     for ticker in &config.tickers {
         tokio::time::sleep(Duration::from_millis(config.ticker_delay_ms)).await;
 
+        let interval = ticker.effective_interval(&config.interval_type);
+
         let need_full_fetch = {
             let db = db.lock().await;
-            db.latest_timestamp(&ticker.symbol, &config.interval_type)
+            db.latest_timestamp(&ticker.symbol, interval)
                 .unwrap_or(None)
                 .is_none()
         };
 
-        let url = build_chart_url(&ticker.symbol, &config.interval_type, need_full_fetch);
+        let url = build_chart_url(&ticker.symbol, interval, need_full_fetch);
 
         let yf_resp = match fetch_yahoo_chart(
             &client,
@@ -210,14 +219,14 @@ pub async fn evaluate_market(
 
         {
             let db = db.lock().await;
-            if let Err(e) = db.insert_ohlcv(&ticker.symbol, &config.interval_type, &ohlcv_rows) {
+            if let Err(e) = db.insert_ohlcv(&ticker.symbol, interval, &ohlcv_rows) {
                 tracing::error!(symbol = %ticker.symbol, error = %e, "DB insert error");
             }
         }
 
         let prices = {
             let db = db.lock().await;
-            db.load_close_prices(&ticker.symbol, &config.interval_type)
+            db.load_close_prices(&ticker.symbol, interval)
                 .unwrap_or_default()
         };
 
@@ -234,7 +243,7 @@ pub async fn evaluate_market(
         let market_data = MarketData {
             symbol: ticker.symbol.clone(),
             close_prices: prices,
-            interval_type: config.interval_type.clone(),
+            interval_type: interval.to_string(),
         };
 
         for indicator_cfg in &ticker.indicators {
@@ -322,6 +331,7 @@ mod tests {
                     period: 14,
                     direction: RsiDirection::Below,
                 })],
+                interval_type: None,
             }],
         }
     }
@@ -375,6 +385,7 @@ mod tests {
                     period: 1000,
                     direction: RsiDirection::Below,
                 })],
+                interval_type: None,
             }],
         };
         // RSI(1000) -> 3000, *2 = 6000, cap 1080 -> 1080
@@ -398,6 +409,7 @@ mod tests {
                     period: 2,
                     direction: RsiDirection::Below,
                 })],
+                interval_type: None,
             }],
         };
         // RSI(2) -> required_bars = 6, *2 = 12, floor at 50
@@ -421,6 +433,7 @@ mod tests {
                     period: 14,
                     direction: RsiDirection::Below,
                 })],
+                interval_type: None,
             }],
         });
         let client = reqwest::Client::builder()
@@ -452,6 +465,7 @@ mod tests {
                         period: 14,
                         direction: RsiDirection::Below,
                     })],
+                    interval_type: None,
                 },
                 TickerConfig {
                     symbol: "BBB".to_string(),
@@ -460,6 +474,7 @@ mod tests {
                         period: 14,
                         direction: RsiDirection::Below,
                     })],
+                    interval_type: None,
                 },
             ],
         });

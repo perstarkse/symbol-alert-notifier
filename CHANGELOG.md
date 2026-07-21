@@ -10,9 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - RSI `direction` config field: `"below"` (default, buy/oversold) or `"above"` (sell/overbought)
 - CLI `--help` / `-h` usage text; missing config path now exits with usage instead of panicking
+- Optional per-ticker `interval_type` (JSON) / `intervalType` (NixOS); falls back to the daemon-wide interval
 
 ### Changed
 
 - CLI requires `--config <path>` instead of a positional config argument
 - NixOS module `ExecStart` passes `--config` to match the new CLI
 - Example config includes an RSI overbought (`direction: "above"`) alert on TSLA
+- NixOS module maps per-ticker `intervalType` into JSON `interval_type`

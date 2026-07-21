@@ -11,6 +11,13 @@
             ]
         },
         {
+            "symbol": "ETH-USD",
+            "interval_type": "1d",
+            "indicators": [
+                { "type": "rsi", "threshold": 30.0 }
+            ]
+        },
+        {
             "symbol": "BOTZ",
             "indicators": [
                 { "type": "rsi", "threshold": 33.0 }

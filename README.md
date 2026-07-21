@@ -65,13 +65,21 @@ All fields in `config.json`:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `ntfy_url` | string | — | ntfy topic URL (required, `https://` only) |
-| `interval_type` | string | `"1wk"` | `"1d"` or `"1wk"` |
+| `interval_type` | string | `"1wk"` | Default `"1d"` or `"1wk"` (overridable per ticker) |
 | `frequency_seconds` | int | `86400` | How often to poll |
 | `ticker_delay_ms` | int | `1500` | Delay between ticker API calls |
 | `max_retries` | int | `3` | Yahoo Finance retry attempts |
 | `retry_base_delay_ms` | int | `500` | Base delay (doubles per attempt) |
 | `db_path` | string | — | DB location (see resolution order below) |
 | `tickers` | array | — | List of symbols + indicator configs |
+
+Each ticker entry:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `symbol` | string | — | Yahoo Finance symbol (required) |
+| `interval_type` | string | daemon default | Optional `"1d"` or `"1wk"` override for this ticker |
+| `indicators` | array | — | Indicator configs (required, non-empty) |
 
 **DB path resolution**: config > `DB_PATH` env > `STATE_DIRECTORY` > `XDG_DATA_HOME` > `~/.local/share/indicator-alert-daemon` > `./data.db`
 
@@ -181,7 +189,7 @@ nix fmt
 services.indicator-alert-daemon = {
   enable = true;
   ntfyUrl = "https://ntfy.sh/my-topic";
-  intervalType = "1d";
+  intervalType = "1wk";
   pollFrequency = 3600;
   tickers = [
     {
@@ -190,9 +198,18 @@ services.indicator-alert-daemon = {
         { type = "rsi"; threshold = 35.0; }
       ];
     }
+    {
+      symbol = "ETH-USD";
+      intervalType = "1d";
+      indicators = [
+        { type = "rsi"; threshold = 30.0; }
+      ];
+    }
   ];
 };
 ```
+
+Import the flake module as `inputs.indicator-alert-daemon.nixosModules.default` (there is no root `module.nix`).
 
 The systemd service runs with `DynamicUser`, `ProtectSystem=strict`, `ProtectHome=true`, `PrivateTmp`, and `NoNewPrivileges`.
 

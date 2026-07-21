@@ -5,15 +5,24 @@ with lib;
 let
   cfg = config.services.indicator-alert-daemon;
   format = pkgs.formats.json { };
+  tickersJson = map
+    (
+      t:
+      {
+        inherit (t) symbol indicators;
+      }
+      // optionalAttrs (t.intervalType != null) { interval_type = t.intervalType; }
+    )
+    cfg.tickers;
   configFile = format.generate "indicator-alert-daemon.json" (
     {
       ntfy_url = cfg.ntfyUrl;
       interval_type = cfg.intervalType;
       frequency_seconds = cfg.pollFrequency;
       ticker_delay_ms = cfg.tickerDelayMs;
-      tickers = cfg.tickers;
+      tickers = tickersJson;
     }
-    // lib.optionalAttrs (cfg.dbPath != null) { db_path = cfg.dbPath; }
+    // optionalAttrs (cfg.dbPath != null) { db_path = cfg.dbPath; }
   );
 in
 {
@@ -24,9 +33,12 @@ in
       description = "ntfy server URL for alerts";
     };
     intervalType = mkOption {
-      type = types.enum [ "1d" "1wk" ];
+      type = types.enum [
+        "1d"
+        "1wk"
+      ];
       default = "1wk";
-      description = "Data sampling interval";
+      description = "Default data sampling interval (overridable per ticker)";
     };
     pollFrequency = mkOption {
       type = types.int;
@@ -44,24 +56,36 @@ in
       description = "Path to the SQLite database file (default: under /var/lib/indicator-alert-daemon)";
     };
     tickers = mkOption {
-      type = types.listOf (types.submodule {
-        options = {
-          symbol = mkOption {
-            type = types.str;
-            description = "Ticker symbol";
+      type = types.listOf (
+        types.submodule {
+          options = {
+            symbol = mkOption {
+              type = types.str;
+              description = "Ticker symbol";
+            };
+            intervalType = mkOption {
+              type = types.nullOr (
+                types.enum [
+                  "1d"
+                  "1wk"
+                ]
+              );
+              default = null;
+              description = "Per-ticker sampling interval; defaults to services.indicator-alert-daemon.intervalType";
+            };
+            indicators = mkOption {
+              type = types.listOf (types.attrsOf types.anything);
+              description = ''
+                List of indicator configurations. Each entry is an attrset
+                with at least a `type` field, e.g.
+                `{ type = "rsi"; threshold = 35.0; period = 14; }` or
+                `{ type = "rsi"; threshold = 70.0; direction = "above"; }` or
+                `{ type = "bollinger_bands"; period = 20; stddev = 2.0; }`.
+              '';
+            };
           };
-          indicators = mkOption {
-            type = types.listOf (types.attrsOf types.anything);
-            description = ''
-              List of indicator configurations. Each entry is an attrset
-              with at least a `type` field, e.g.
-              `{ type = "rsi"; threshold = 35.0; period = 14; }` or
-              `{ type = "rsi"; threshold = 70.0; direction = "above"; }` or
-              `{ type = "bollinger_bands"; period = 20; stddev = 2.0; }`.
-            '';
-          };
-        };
-      });
+        }
+      );
       default = [ ];
       description = "Tickers with indicator configurations";
     };
@@ -74,8 +98,7 @@ in
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
-        ExecStart =
-          "${self.packages.${pkgs.system}.default}/bin/indicator-alert-daemon --config ${configFile}";
+        ExecStart = "${self.packages.${pkgs.system}.default}/bin/indicator-alert-daemon --config ${configFile}";
         Restart = "always";
         RestartSec = "30";
 

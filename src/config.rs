@@ -33,6 +33,16 @@ const fn default_retry_base_delay_ms() -> u64 {
 pub struct TickerConfig {
     pub symbol: String,
     pub indicators: Vec<IndicatorConfig>,
+    /// Per-ticker sampling interval; falls back to the daemon-wide `interval_type`.
+    #[serde(default)]
+    pub interval_type: Option<String>,
+}
+
+impl TickerConfig {
+    /// Effective interval for this ticker (`interval_type` or the daemon default).
+    pub fn effective_interval<'a>(&'a self, global: &'a str) -> &'a str {
+        self.interval_type.as_deref().unwrap_or(global)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +158,15 @@ fn apply_env_overrides(config: &mut DaemonConfig) {
     }
 }
 
+fn validate_interval_type(interval: &str) -> Result<(), Box<dyn std::error::Error>> {
+    match interval {
+        "1d" | "1wk" => Ok(()),
+        _ => {
+            Err(format!("unsupported interval_type: '{interval}' (expected '1d' or '1wk')").into())
+        }
+    }
+}
+
 fn validate_config(config: &DaemonConfig) -> Result<(), Box<dyn std::error::Error>> {
     if config.ntfy_url.trim().is_empty() {
         return Err("ntfy_url must not be empty".into());
@@ -159,16 +178,7 @@ fn validate_config(config: &DaemonConfig) -> Result<(), Box<dyn std::error::Erro
     if url::Url::parse(trimmed_url).is_err() {
         return Err(format!("ntfy_url is not a valid URL: '{}'", trimmed_url).into());
     }
-    match config.interval_type.as_str() {
-        "1d" | "1wk" => {}
-        _ => {
-            return Err(format!(
-                "unsupported interval_type: '{}' (expected '1d' or '1wk')",
-                config.interval_type
-            )
-            .into());
-        }
-    }
+    validate_interval_type(&config.interval_type)?;
     if config.frequency_seconds == 0 {
         return Err("frequency_seconds must be > 0".into());
     }
@@ -178,6 +188,10 @@ fn validate_config(config: &DaemonConfig) -> Result<(), Box<dyn std::error::Erro
     for ticker in &config.tickers {
         if ticker.symbol.trim().is_empty() {
             return Err("ticker symbol must not be empty".into());
+        }
+        if let Some(interval) = &ticker.interval_type {
+            validate_interval_type(interval)
+                .map_err(|e| format!("ticker '{}': {e}", ticker.symbol))?;
         }
         if ticker.indicators.is_empty() {
             return Err(format!(
@@ -352,6 +366,7 @@ mod tests {
                     period: 14,
                     direction: RsiDirection::Below,
                 })],
+                interval_type: None,
             }],
         }
     }
@@ -399,6 +414,39 @@ mod tests {
         cfg.interval_type = "1m".to_string();
         let err = validate_config(&cfg).unwrap_err();
         assert!(err.to_string().contains("interval_type"));
+    }
+
+    #[test]
+    fn test_validate_bad_ticker_interval() {
+        let mut cfg = valid_config();
+        cfg.tickers[0].interval_type = Some("1m".to_string());
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("TEST"));
+        assert!(err.to_string().contains("interval_type"));
+    }
+
+    #[test]
+    fn test_deserialize_ticker_interval_override() {
+        let json = r#"{
+            "ntfy_url": "https://ntfy.sh/test",
+            "interval_type": "1wk",
+            "frequency_seconds": 3600,
+            "tickers": [
+                {
+                    "symbol": "ETH-USD",
+                    "interval_type": "1d",
+                    "indicators": [{ "type": "rsi", "threshold": 30.0 }]
+                }
+            ]
+        }"#;
+        let cfg: DaemonConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.tickers[0].effective_interval(&cfg.interval_type), "1d");
+    }
+
+    #[test]
+    fn test_effective_interval_falls_back_to_global() {
+        let cfg = valid_config();
+        assert_eq!(cfg.tickers[0].effective_interval(&cfg.interval_type), "1d");
     }
 
     #[test]
