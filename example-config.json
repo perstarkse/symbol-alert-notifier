@@ -7,7 +7,7 @@
         {
             "symbol": "KOID",
             "indicators": [
-                { "type": "rsi", "threshold": 35.0, "period": 14 }
+                { "type": "rsi", "threshold": 35.0, "period": 14, "direction": "below" }
             ]
         },
         {
@@ -26,6 +26,7 @@
             "symbol": "TSLA",
             "indicators": [
                 { "type": "rsi", "threshold": 32.0 },
+                { "type": "rsi", "threshold": 70.0, "direction": "above" },
                 { "type": "bollinger_bands", "period": 20, "stddev": 2.0 }
             ]
         }

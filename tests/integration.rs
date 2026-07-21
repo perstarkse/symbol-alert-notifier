@@ -16,6 +16,7 @@ fn test_evaluate_multiple_indicators() {
     let cfg_rsi = IndicatorConfig::Rsi(RsiConfig {
         threshold: 35.0,
         period: 14,
+        direction: RsiDirection::Below,
     });
 
     let data_up = MarketData {
@@ -41,6 +42,7 @@ fn test_message_has_all_fields() {
     let cfg = IndicatorConfig::Rsi(RsiConfig {
         threshold: 35.0,
         period: 14,
+        direction: RsiDirection::Below,
     });
     let data = MarketData {
         symbol: "KOID".to_string(),
@@ -77,10 +79,38 @@ fn test_binary_fails_without_args() {
 #[test]
 fn test_binary_fails_with_bad_config() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_indicator-alert-daemon"))
-        .arg("/tmp/nonexistent-bad-path.json")
+        .args(["--config", "/tmp/nonexistent-bad-path.json"])
         .output()
         .expect("Failed to run binary");
     assert!(!output.status.success());
+}
+
+#[test]
+fn test_binary_rejects_positional_config() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_indicator-alert-daemon"))
+        .arg("example-config.json")
+        .output()
+        .expect("Failed to run binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("use --config <path>"),
+        "Expected rejection of positional config, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_binary_requires_config_value() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_indicator-alert-daemon"))
+        .arg("--config")
+        .output()
+        .expect("Failed to run binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--config requires a path"),
+        "Expected missing-value error, got: {stderr}"
+    );
 }
 
 #[test]
@@ -136,6 +166,7 @@ fn test_indicator_required_bars() {
     let rsi = IndicatorConfig::Rsi(RsiConfig {
         threshold: 30.0,
         period: 14,
+        direction: RsiDirection::Below,
     });
     assert_eq!(rsi.required_bars(), 42);
 

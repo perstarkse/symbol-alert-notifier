@@ -56,6 +56,7 @@ in
               List of indicator configurations. Each entry is an attrset
               with at least a `type` field, e.g.
               `{ type = "rsi"; threshold = 35.0; period = 14; }` or
+              `{ type = "rsi"; threshold = 70.0; direction = "above"; }` or
               `{ type = "bollinger_bands"; period = 20; stddev = 2.0; }`.
             '';
           };
@@ -74,7 +75,7 @@ in
 
       serviceConfig = {
         ExecStart =
-          "${self.packages.${pkgs.system}.default}/bin/indicator-alert-daemon ${configFile}";
+          "${self.packages.${pkgs.system}.default}/bin/indicator-alert-daemon --config ${configFile}";
         Restart = "always";
         RestartSec = "30";
 

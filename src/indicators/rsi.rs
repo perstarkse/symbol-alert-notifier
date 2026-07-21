@@ -1,4 +1,4 @@
-use crate::config::RsiConfig;
+use crate::config::{RsiConfig, RsiDirection};
 use crate::data::{MarketData, calculate_price_change};
 use crate::indicators::{Indicator, IndicatorResult};
 
@@ -24,16 +24,31 @@ impl Indicator for RsiConfig {
         };
 
         let log_label = format!("RSI: {:.1}", rsi);
+        let triggered = match self.direction {
+            RsiDirection::Below => rsi < self.threshold,
+            RsiDirection::Above => rsi > self.threshold,
+        };
 
-        if rsi < self.threshold {
+        if triggered {
+            let op = match self.direction {
+                RsiDirection::Below => '<',
+                RsiDirection::Above => '>',
+            };
             let msg = format!(
                 "Asset Target Breached!\n\
                  Ticker: {}\n\
                  Price: ${:.2}\n\
                  1-Day Change: {:.2}%\n\
                  7-Day Change: {:.2}%\n\
-                 RSI ({}): {:.1} (Target: <{:.1})",
-                data.symbol, current_price, chg_1d, chg_7d, data.interval_type, rsi, self.threshold,
+                 RSI ({}): {:.1} (Target: {}{:.1})",
+                data.symbol,
+                current_price,
+                chg_1d,
+                chg_7d,
+                data.interval_type,
+                rsi,
+                op,
+                self.threshold,
             );
             IndicatorResult {
                 triggered: true,
@@ -138,10 +153,11 @@ mod tests {
     }
 
     #[test]
-    fn test_rsi_indicator_below_threshold() {
+    fn test_rsi_indicator_below_threshold_triggers() {
         let cfg = RsiConfig {
             threshold: 35.0,
             period: 14,
+            direction: RsiDirection::Below,
         };
         let data = MarketData {
             symbol: "TEST".to_string(),
@@ -150,15 +166,17 @@ mod tests {
         };
         let result = cfg.evaluate(&data);
         assert!(result.triggered);
-        assert!(result.alert_message.is_some());
-        assert!(result.alert_message.unwrap().contains("TEST"));
+        let msg = result.alert_message.unwrap();
+        assert!(msg.contains("TEST"));
+        assert!(msg.contains("Target: <35.0"));
     }
 
     #[test]
-    fn test_rsi_indicator_above_threshold() {
+    fn test_rsi_indicator_below_direction_does_not_trigger_when_high() {
         let cfg = RsiConfig {
             threshold: 35.0,
             period: 14,
+            direction: RsiDirection::Below,
         };
         let data = MarketData {
             symbol: "TEST".to_string(),
@@ -171,10 +189,46 @@ mod tests {
     }
 
     #[test]
+    fn test_rsi_indicator_above_direction_triggers_when_high() {
+        let cfg = RsiConfig {
+            threshold: 65.0,
+            period: 14,
+            direction: RsiDirection::Above,
+        };
+        let data = MarketData {
+            symbol: "TEST".to_string(),
+            close_prices: (0..30).map(|i| 100.0 + i as f64).collect(),
+            interval_type: "1d".to_string(),
+        };
+        let result = cfg.evaluate(&data);
+        assert!(result.triggered);
+        let msg = result.alert_message.unwrap();
+        assert!(msg.contains("Target: >65.0"));
+    }
+
+    #[test]
+    fn test_rsi_indicator_above_direction_does_not_trigger_when_low() {
+        let cfg = RsiConfig {
+            threshold: 65.0,
+            period: 14,
+            direction: RsiDirection::Above,
+        };
+        let data = MarketData {
+            symbol: "TEST".to_string(),
+            close_prices: (0..30).map(|i| 100.0 - i as f64).collect(),
+            interval_type: "1d".to_string(),
+        };
+        let result = cfg.evaluate(&data);
+        assert!(!result.triggered);
+        assert!(result.alert_message.is_none());
+    }
+
+    #[test]
     fn test_rsi_indicator_insufficient_data() {
         let cfg = RsiConfig {
             threshold: 35.0,
             period: 14,
+            direction: RsiDirection::Below,
         };
         let data = MarketData {
             symbol: "TEST".to_string(),

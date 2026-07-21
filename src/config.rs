@@ -44,11 +44,23 @@ pub enum IndicatorConfig {
     Crossover(CrossoverConfig),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RsiDirection {
+    /// Alert when RSI is strictly below `threshold` (buy / oversold).
+    #[default]
+    Below,
+    /// Alert when RSI is strictly above `threshold` (sell / overbought).
+    Above,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RsiConfig {
     pub threshold: f64,
     #[serde(default = "default_rsi_period")]
     pub period: usize,
+    #[serde(default)]
+    pub direction: RsiDirection,
 }
 
 const fn default_rsi_period() -> usize {
@@ -338,6 +350,7 @@ mod tests {
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                     threshold: 30.0,
                     period: 14,
+                    direction: RsiDirection::Below,
                 })],
             }],
         }
@@ -426,9 +439,39 @@ mod tests {
         cfg.tickers[0].indicators = vec![IndicatorConfig::Rsi(RsiConfig {
             threshold: 150.0,
             period: 14,
+            direction: RsiDirection::Below,
         })];
         let err = validate_config(&cfg).unwrap_err();
         assert!(err.to_string().contains("RSI threshold"));
+    }
+
+    #[test]
+    fn test_deserialize_rsi_direction_defaults_to_below() {
+        let json = r#"{"type": "rsi", "threshold": 30.0}"#;
+        let cfg: IndicatorConfig = serde_json::from_str(json).unwrap();
+        match cfg {
+            IndicatorConfig::Rsi(rsi) => assert_eq!(rsi.direction, RsiDirection::Below),
+            _ => panic!("Expected RSI variant"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_rsi_direction_above() {
+        let json = r#"{"type": "rsi", "threshold": 70.0, "direction": "above"}"#;
+        let cfg: IndicatorConfig = serde_json::from_str(json).unwrap();
+        match cfg {
+            IndicatorConfig::Rsi(rsi) => {
+                assert!((rsi.threshold - 70.0).abs() < 0.001);
+                assert_eq!(rsi.direction, RsiDirection::Above);
+            }
+            _ => panic!("Expected RSI variant"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_rsi_direction_invalid() {
+        let json = r#"{"type": "rsi", "threshold": 30.0, "direction": "sideways"}"#;
+        assert!(serde_json::from_str::<IndicatorConfig>(json).is_err());
     }
 
     #[test]

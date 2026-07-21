@@ -57,8 +57,13 @@
               ];
             };
           in
-          pkgs.runCommand "test-module-eval" { } ''
+          pkgs.runCommand "test-module-eval"
+            {
+              execStart = eval.config.systemd.services.indicator-alert-daemon.serviceConfig.ExecStart;
+            } ''
             echo "Evaluated intervalType: ${eval.config.services.indicator-alert-daemon.intervalType}"
+            echo "ExecStart: $execStart"
+            echo "$execStart" | grep -q -- '--config '
             touch $out
           '';
       };

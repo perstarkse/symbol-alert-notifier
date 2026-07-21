@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 pub use config::{
     BollingerBandsConfig, CrossoverConfig, DaemonConfig, IndicatorConfig, MacdConfig, RsiConfig,
-    TickerConfig,
+    RsiDirection, TickerConfig,
 };
 pub use data::{MarketData, OhlcvRow, extract_prices};
 pub use indicators::IndicatorResult;
@@ -320,6 +320,7 @@ mod tests {
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                     threshold: 35.0,
                     period: 14,
+                    direction: RsiDirection::Below,
                 })],
             }],
         }
@@ -372,6 +373,7 @@ mod tests {
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                     threshold: 30.0,
                     period: 1000,
+                    direction: RsiDirection::Below,
                 })],
             }],
         };
@@ -394,6 +396,7 @@ mod tests {
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                     threshold: 30.0,
                     period: 2,
+                    direction: RsiDirection::Below,
                 })],
             }],
         };
@@ -416,6 +419,7 @@ mod tests {
                 indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                     threshold: 35.0,
                     period: 14,
+                    direction: RsiDirection::Below,
                 })],
             }],
         });
@@ -446,6 +450,7 @@ mod tests {
                     indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                         threshold: 30.0,
                         period: 14,
+                        direction: RsiDirection::Below,
                     })],
                 },
                 TickerConfig {
@@ -453,6 +458,7 @@ mod tests {
                     indicators: vec![IndicatorConfig::Rsi(RsiConfig {
                         threshold: 40.0,
                         period: 14,
+                        direction: RsiDirection::Below,
                     })],
                 },
             ],
@@ -484,6 +490,7 @@ mod tests {
         let cfg = IndicatorConfig::Rsi(RsiConfig {
             threshold: 30.0,
             period: 14,
+            direction: RsiDirection::Below,
         });
         let config_json = serde_json::to_string(&cfg).unwrap();
 

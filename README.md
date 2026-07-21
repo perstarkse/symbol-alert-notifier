@@ -30,7 +30,8 @@ Monitor financial indicators via Yahoo Finance and fire alerts to [ntfy](https:/
 ```
 
 ```
-indicator-alert-daemon config.json
+indicator-alert-daemon --config example-config.json
+indicator-alert-daemon --help
 ```
 
 Logs at `info` level by default. Set `RUST_LOG=debug` for more detail.
@@ -80,12 +81,18 @@ All fields in `config.json`:
 
 ### RSI
 
-Triggers when RSI drops below `threshold`.
+Triggers when RSI crosses the configured side of `threshold`.
 
 | Field | Default | Description |
 |---|---|---|
 | `period` | `14` | RSI calculation period |
-| `threshold` | — | Alert when RSI < this value (0–100) |
+| `threshold` | — | RSI level to compare against (0–100) |
+| `direction` | `"below"` | `"below"` alerts when RSI < threshold (buy / oversold); `"above"` alerts when RSI > threshold (sell / overbought) |
+
+```json
+{ "type": "rsi", "threshold": 30.0, "direction": "below" }
+{ "type": "rsi", "threshold": 70.0, "direction": "above" }
+```
 
 ### MACD
 
